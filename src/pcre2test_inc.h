@@ -6343,6 +6343,37 @@ ASSERT(rc == PCRE2_ERROR_DIFFSUBSPATTERN, "pcre2_substitute(pattern)");
     pcre2_general_context_free(serialize_test_context);
   }
 
+  /* goto 2 with multiple codes: fail on second code, verify no double-free */
+  {
+    pcre2_code *codes_for_encode[2] = {
+      pcre2_compile(pattern, PCRE2_ZERO_TERMINATED, 0, &errorcode, &erroroffset, NULL),
+      pcre2_compile("^b", PCRE2_ZERO_TERMINATED, 0, &errorcode, &erroroffset, NULL)
+    };
+    uint8_t *multi_serialized = NULL;
+    PCRE2_SIZE multi_serialized_size = 0;
+    pcre2_code *multi_decode_codes[2] = { NULL, NULL };
+    pcre2_general_context *serialize_test_context =
+      pcre2_general_context_create(&my_malloc, &my_free, NULL);
+
+    ASSERT(codes_for_encode[0] != NULL && codes_for_encode[1] != NULL,
+      "multi-code serialize setup");
+    rc = pcre2_serialize_encode((const pcre2_code **)codes_for_encode, 2,
+      &multi_serialized, &multi_serialized_size, NULL);
+    pcre2_code_free(codes_for_encode[0]);
+    pcre2_code_free(codes_for_encode[1]);
+    ASSERT(rc == 2 && multi_serialized != NULL, "multi-code serialize setup");
+
+    mallocs_until_failure = 3;  /* fail on second code block allocation */
+    rc = pcre2_serialize_decode(multi_decode_codes, 2, multi_serialized,
+      serialize_test_context);
+    mallocs_until_failure = INT_MAX;
+    pcre2_general_context_free(serialize_test_context);
+    pcre2_serialize_free(multi_serialized);
+
+    ASSERT(rc == PCRE2_ERROR_NOMEMORY && multi_decode_codes[0] == NULL &&
+      multi_decode_codes[1] == NULL, "pcre2_serialize_decode(multi malloc failure)");
+  }
+
   /* goto 3: magic_number / name_entry_size / name_count validation */
   {
     size_t off = sizeof(pcre2_serialized_data) + TABLES_LENGTH +
